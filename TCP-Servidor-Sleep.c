@@ -1,8 +1,3 @@
-/*
-Marcelino Noguero - 16011538
-Stephanie Leong - 15003270
-*/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
