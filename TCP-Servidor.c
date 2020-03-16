@@ -13,6 +13,7 @@
 #include <signal.h>
 #include <arpa/inet.h> 
 #include <pthread.h>
+#include <sys/syscall.h>
 
 /*
  * Servidor TCP
@@ -37,12 +38,12 @@ pthread_mutex_t mutex;
 
 void encerraServidor(){
 
-
+	pthread_mutex_destroy(mutex);
 	printf("\nServidor encerrado.\n");
 	exit(0);
 }
 
-int cadastraMensagem(int ns, struct sockaddr_in client){
+int cadastraMensagem(int ns, struct sockaddr_in client,pid_t fid){
 
 	int full = 0;
 	struct mensagem recvmsg;
@@ -67,7 +68,7 @@ int cadastraMensagem(int ns, struct sockaddr_in client){
 		if(msgs[i].validade == 0){
 			msgs[i] = recvmsg;
 			nmsgs = nmsgs + 1;
-			printf("Mensagem de %s recebida pela porta %d e cadastrada com usuario %s.\n",inet_ntoa(client.sin_addr),ntohs(client.sin_port),recvmsg.usuario);
+			printf("[%d] Mensagem de %s recebida pela porta %d e cadastrada com usuario %s.\n",fid,inet_ntoa(client.sin_addr),ntohs(client.sin_port),recvmsg.usuario);
 			break;
 	  	}
 	}
@@ -75,7 +76,7 @@ int cadastraMensagem(int ns, struct sockaddr_in client){
 	pthread_mutex_unlock(&mutex);
 }
 
-int removeMensagem(int ns, struct sockaddr_in client){
+int removeMensagem(int ns, struct sockaddr_in client,pid_t fid){
 
 	int n = 0;
 	char recvbuf[512];
@@ -113,11 +114,11 @@ int removeMensagem(int ns, struct sockaddr_in client){
 	pthread_mutex_unlock(&mutex);
 	
 	if(n != 0){
-		printf("%d mensagenm do usuario %s foram removidas a pedido de %s pela porta %d.\n",n,recvbuf,inet_ntoa(client.sin_addr),ntohs(client.sin_port));
+		printf("[%d] %d mensagenm do usuario %s foram removidas a pedido de %s pela porta %d.\n",fid,n,recvbuf,inet_ntoa(client.sin_addr),ntohs(client.sin_port));
 	}
 }
 
-int enviaMensagem(int ns, struct sockaddr_in client){
+int enviaMensagem(int ns, struct sockaddr_in client,pid_t fid){
 
 	pthread_mutex_lock(&mutex);
 
@@ -137,7 +138,7 @@ int enviaMensagem(int ns, struct sockaddr_in client){
 
 	pthread_mutex_unlock(&mutex);
 
-	printf("Todas as mensagens foram enviadas ao cliente %s pela porta %d.\n",inet_ntoa(client.sin_addr),ntohs(client.sin_port));
+	printf("[%d] Todas as mensagens foram enviadas ao cliente %s pela porta %d.\n",fid,inet_ntoa(client.sin_addr),ntohs(client.sin_port));
 }
 
 void *atenderCliente(void *args){
@@ -145,8 +146,10 @@ void *atenderCliente(void *args){
 	int op;
 	int ns = ((struct arg_struct*)args)->ns;
 	struct sockaddr_in client = ((struct arg_struct*)args)->client;
+	pid_t fid = syscall(SYS_gettid);
 
-	printf("Conexao estabelecida com o IP %s na porta %d.\n",inet_ntoa(client.sin_addr),ntohs(client.sin_port));
+	printf("Thread atendente criada %d\n",fid);
+	printf("[%d] Conexao estabelecida com o IP %s na porta %d.\n",fid,inet_ntoa(client.sin_addr),ntohs(client.sin_port));
 
 	while(1){
 
@@ -161,32 +164,32 @@ void *atenderCliente(void *args){
 
 			/* Cadastra nova mensagem */
 			case 1:
-				cadastraMensagem(ns,client);
+				cadastraMensagem(ns,client,fid);
 				break;
 
 			/* Envia todos as mensasgens cadastradas */
 			case 2:					 
-				enviaMensagem(ns,client);
+				enviaMensagem(ns,client,fid);
 				break;
 
 			/* Remove mensagens cadastrada*/
 			case 3:	
-				removeMensagem(ns,client);
+				removeMensagem(ns,client,fid);
 				break;
 		
 			/* Aceita a/aguarda pela proxima conexão da fila se o cliente desconectar*/
 			case 4:
-				printf("Conexao com o IP %s (porta %d) encerrada.\n",inet_ntoa(client.sin_addr),ntohs(client.sin_port));
+				printf("[%d] Conexao com o IP %s (porta %d) encerrada.\n",fid,inet_ntoa(client.sin_addr),ntohs(client.sin_port));
 
 				close(ns);
-				exit(0);
+				pthread_exit(NULL);
 
 				break;
 		}
 	}
 }
 
-int inicializaMemSem(){
+int inicializaMem(){
 
 	nmsgs = 0;
 
@@ -204,14 +207,13 @@ int main(int argc, char **argv)
     int ns;                    /* Socket conectado ao cliente        */
     int namelen;
     int tp;
-    pid_t pid, fid;
     pthread_t thread;
 
     struct arg_struct arguments;
-
-    signal(SIGINT, encerraServidor);
  
-    inicializaMemSem();
+    signal(SIGINT,encerraServidor);
+    
+    inicializaMem();
 
     /*
      * O primeiro argumento (argv[1]) e a porta
@@ -287,9 +289,9 @@ int main(int argc, char **argv)
 
 		tp = pthread_create(&thread, NULL, &atenderCliente, (void*)&arguments);
 		if (tp) {
-			printf("ERRO: impossivel criar um thread produtor\n");
+			printf("ERRO: impossivel criar uma thread antendente\n");
 			exit(-1);
-		}
+		}	
 
 		pthread_detach(thread);
 	};
